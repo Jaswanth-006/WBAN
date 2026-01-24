@@ -1,0 +1,53 @@
+/* frontend/src/App.css */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden; /* Prevents scrollbars */
+}
+
+.dashboard {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+/* The Status Header */
+.header {
+  padding: 20px;
+  text-align: center;
+  color: white;
+  font-size: 1.5rem;
+  font-weight: bold;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+  z-index: 1000; /* Keeps header on top of map */
+}
+
+.header.safe {
+  background-color: #27ae60; /* Green */
+}
+
+.header.danger {
+  background-color: #c0392b; /* Red */
+  animation: flashRed 1s infinite;
+}
+
+.map-container {
+  flex: 1; /* Fills remaining space */
+  position: relative;
+}
+
+/* Animation for Panic Mode */
+@keyframes flashRed {
+  0% { background-color: #c0392b; }
+  50% { background-color: #e74c3c; }
+  100% { background-color: #c0392b; }
+}
+
+/* Fix for Leaflet Map Rendering */
+.leaflet-container {
+  height: 100%;
+  width: 100%;
+}
