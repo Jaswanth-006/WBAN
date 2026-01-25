@@ -1,25 +1,29 @@
-// src/app.controller.ts
-import { Body, Controller, Get, Post } from '@nestjs/common';
-import { AppGateway } from './app.gateway';
+import { Controller, Get, Post, Body } from '@nestjs/common';
 
-@Controller('api') // This prefixes all routes with /api
+@Controller('api/alert')
 export class AppController {
-  constructor(private readonly gateway: AppGateway) {}
 
-  @Get()
-  checkStatus(): string {
-    return 'WBAN Server is Online 🟢';
-  }
+  // Memory Storage
+  private alerts: any[] = [];
 
-  // The SIM800L sends data here
-  @Post('alert')
+  // 1. RECEIVE (POST)
+  @Post()
   receiveAlert(@Body() data: any) {
     console.log('🚨 ALERT RECEIVED:', data);
+    
+    const newAlert = {
+      ...data,
+      timestamp: new Date(),
+      id: this.alerts.length + 1
+    };
+    
+    this.alerts.unshift(newAlert);
+    return { status: 'Received', saved: true };
+  }
 
-    // 1. Send to Frontend via WebSocket
-    this.gateway.sendPanicAlert(data);
-
-    // 2. Reply to SIM800L
-    return { status: 'Received', timestamp: new Date() };
+  // 2. SEND (GET)
+  @Get()
+  sendAlerts() {
+    return this.alerts;
   }
 }

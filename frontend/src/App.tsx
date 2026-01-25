@@ -1,74 +1,71 @@
-// frontend/src/App.tsx
 import { useEffect, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
-import io from 'socket.io-client';
-import 'leaflet/dist/leaflet.css'; // Import map styles
+import 'leaflet/dist/leaflet.css';
 import './App.css';
 
-// 1. Connect to your NestJS Backend
-const socket = io('http://localhost:3000'); 
-
-interface AlertData {
-  lat: number;
-  lng: number;
-  deviceId: string;
-}
+// Fix Icons
+import L from 'leaflet';
+import icon from 'leaflet/dist/images/marker-icon.png';
+import iconShadow from 'leaflet/dist/images/marker-shadow.png';
+const DefaultIcon = L.icon({
+    iconUrl: icon, shadowUrl: iconShadow,
+    iconSize: [25, 41], iconAnchor: [12, 41]
+});
+L.Marker.prototype.options.icon = DefaultIcon;
 
 function App() {
-  const [alert, setAlert] = useState<AlertData | null>(null);
+  const [activeAlert, setActiveAlert] = useState<any>(null);
+  const defaultPosition = { lat: 10.9027, lng: 76.9006 }; 
+
+  const fetchAlerts = async () => {
+    try {
+      // FIX 5: URL matches the backend (Singular)
+      const response = await fetch('http://localhost:3000/api/alert');
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (Array.isArray(data) && data.length > 0) {
+          console.log("🔥 New Alert Found:", data[0]);
+          setActiveAlert(data[0]);
+        }
+      }
+    } catch (error) {
+      console.error("Connection Error:", error);
+    }
+  };
 
   useEffect(() => {
-    // 2. Listen for 'panic-alert' event from Backend
-    socket.on('panic-alert', (data: AlertData) => {
-      console.log("🚨 ALARM RECEIVED:", data);
-      setAlert(data);
-      
-      // Optional: Browser Alert Sound
-      // const audio = new Audio('https://www.soundjay.com/buttons/beep-01a.mp3');
-      // audio.play();
-    });
-
-    return () => {
-      socket.off('panic-alert');
-    };
+    fetchAlerts();
+    const interval = setInterval(fetchAlerts, 2000); 
+    return () => clearInterval(interval);
   }, []);
-
-  // Default Location (e.g., Your College or City Center)
-  const defaultPosition = { lat: 11.0168, lng: 76.9558 }; // Coimbatore
 
   return (
     <div className="dashboard">
-      {/* Header Changes Color on Alert */}
-      <div className={`header ${alert ? 'danger' : 'safe'}`}>
-        {alert ? `⚠️ SOS TRIGGERED: ${alert.deviceId}` : "✅ System Active & Monitoring"}
-      </div>
+       <div style={{
+         padding: '20px', 
+         backgroundColor: activeAlert ? '#ff4d4d' : '#4caf50', 
+         color: 'white', textAlign: 'center', fontSize: '24px', fontWeight: 'bold'
+       }}>
+         {activeAlert ? `⚠️ SOS TRIGGERED: ${activeAlert.deviceId}` : "✅ System Active & Monitoring"}
+       </div>
 
-      <div className="map-container">
-        <MapContainer 
-          center={[alert ? alert.lat : defaultPosition.lat, alert ? alert.lng : defaultPosition.lng]} 
-          zoom={15} 
-          scrollWheelZoom={true}
-        >
-          {/* Load OpenStreetMap Tiles */}
-          <TileLayer
-            attribution='&copy; OpenStreetMap contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-          />
-
-          {/* If Alert exists, show Red Marker */}
-          {alert && (
-            <Marker position={[alert.lat, alert.lng]}>
-              <Popup>
-                <strong>HELP NEEDED HERE!</strong> <br />
-                Device: {alert.deviceId} <br />
-                Coordinates: {alert.lat}, {alert.lng}
-              </Popup>
-            </Marker>
-          )}
-        </MapContainer>
-      </div>
+       <div className="map-container" style={{ height: '80vh', width: '100%' }}>
+         <MapContainer center={[defaultPosition.lat, defaultPosition.lng]} zoom={13} style={{ height: '100%' }}>
+           <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+           {activeAlert && (
+             <Marker position={[defaultPosition.lat, defaultPosition.lng]}>
+               <Popup>
+                 <strong style={{color:'red'}}>SOS ALERT!</strong><br/>
+                 Device: {activeAlert.deviceId}<br/>
+                 Steps: {activeAlert.steps}<br/>
+                 Battery: {activeAlert.battery}%
+               </Popup>
+             </Marker>
+           )}
+         </MapContainer>
+       </div>
     </div>
   );
 }
-
 export default App;
