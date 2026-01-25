@@ -1,22 +1,32 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
+import { Controller, Get, Post, Body } from '@nestjs/common';
 
-describe('AppController', () => {
-  let appController: AppController;
+@Controller('api/alert')
+export class AppController {
 
-  beforeEach(async () => {
-    const app: TestingModule = await Test.createTestingModule({
-      controllers: [AppController],
-      providers: [AppService],
-    }).compile();
+  // Memory Storage
+  private alerts: any[] = [];
 
-    appController = app.get<AppController>(AppController);
-  });
+  // 1. RECEIVE (POST)
+  @Post()
+  receiveAlert(@Body() data: any) {
+    console.log('🚨 ALERT RECEIVED:', data);
+    
+    // Create alert object
+    const newAlert = {
+      ...data,
+      timestamp: new Date(),
+      id: this.alerts.length + 1
+    };
+    
+    // Save to list
+    this.alerts.unshift(newAlert);
+    
+    return { status: 'Received', saved: true };
+  }
 
-  describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(appController.getHello()).toBe('Hello World!');
-    });
-  });
-});
+  // 2. SEND (GET)
+  @Get()
+  sendAlerts() {
+    return this.alerts;
+  }
+}
