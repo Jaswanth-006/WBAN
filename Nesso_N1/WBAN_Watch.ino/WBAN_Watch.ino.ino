@@ -1,11 +1,11 @@
 /*
- * WBAN Smartwatch - VERBOSE DEBUG EDITION
- * ---------------------------------------
- * PRINTS EVERYTHING:
- * 1. WiFi Status
- * 2. ESP-NOW Data (from Dress)
- * 3. IMU Readings (X, Y, Z)
- * 4. AI Model Confidence Scores
+ * WBAN Smartwatch - DEBUG MODE (ESP-NOW VISIBLE)
+ * ----------------------------------------------
+ * 1. AI Fall Detection
+ * 2. GUI & Connectivity
+ * 3. GPS Tracking
+ * 4. MANUAL TRIGGER: Double-Press Green Button (KEY1)
+ * 5. DEBUG: Prints Dress Pressure to Serial Monitor
  */
 
 #include "Config.h"
@@ -14,7 +14,21 @@
 #include "UI.h"
 #include "Connectivity.h"
 #include <Arduino_BMI270_BMM150.h>
-#include <Women_Safety_Core_inferencing.h> 
+#include <DNN_1_Dataset_inferencing.h>
+
+//#include <CNN_Dataset1_inferencing.h>
+//#include <CNN_LSTM_Dataset1_inferencing.h>
+//#include <FT_MLP_Dataset1_inferencing.h>
+//#include <TCN_Dataset1_inferencing.h>
+//#include <ResNet_BiLSTM_Dataset1_inferencing.h>
+
+//#include <DNN_2_Dataset_inferencing.h>
+//#include <CNN_Dataset2_inferencing.h>
+//#include <CNN_LSTM_Dataset2_inferencing.h>
+//#include <FT_MLP_Dataset2_inferencing.h>
+//#include <TCN_Dataset2_inferencing.h>
+//#include <ResNet_BiLSTM_Dataset2_inferencing.h>
+
 #include <esp_now.h>
 #include <WiFi.h>
 #include <Arduino_Nesso_N1.h> 
@@ -39,15 +53,16 @@ float currentPressure = 0.0;
 
 // --- FUNCTION PROTOTYPES ---
 void handlePanic(String source);
+void checkManualSOS(); 
 int raw_feature_get_data(size_t offset, size_t length, float *out_ptr);
 void runAILogic();
 
-// --- ESP-NOW CALLBACK ---
+// --- ESP-NOW CALLBACK (DEBUG ENABLED) ---
 void OnDataRecv(const esp_now_recv_info_t * info, const uint8_t *incomingDataPtr, int len) {
   memcpy(&incomingData, incomingDataPtr, sizeof(incomingData));
   currentPressure = (float)incomingData.pressureValue;
   
-  // DEBUG: Show incoming data instantly
+  // *** DEBUG LINES UNCOMMENTED ***
   Serial.print(">>> [ESP-NOW] From Dress | Pressure: "); 
   Serial.println(currentPressure);
 }
@@ -57,11 +72,9 @@ void OnDataRecv(const esp_now_recv_info_t * info, const uint8_t *incomingDataPtr
 // -------------------------------------------------------------------------
 void setup() {
   Serial.begin(115200);
-  
-  // DELAY TO CATCH SERIAL MONITOR
   delay(3000); 
   Serial.println("\n\n========================================");
-  Serial.println("   NESSO N1 - DIAGNOSTIC MODE STARTING   ");
+  Serial.println("   NESSO N1 - DEBUG FIRMWARE STARTING    ");
   Serial.println("========================================");
 
   // 1. UI
@@ -69,10 +82,13 @@ void setup() {
   UI.begin();
   Serial.println("OK");
   
-  // 2. Connectivity
-  Serial.print("[BOOT] 2. Initializing WiFi/GSM... ");
+  // 2. Connectivity & Core
+  Serial.print("[BOOT] 2. Initializing WiFi/GSM & Core... ");
   Core.begin();
   Connectivity.begin(); 
+  
+  // ---> SYNC TIME USING WIFI <---
+  Connectivity.syncTimeWithWiFi(); 
   Serial.println("OK");
 
   // 3. Sensors
@@ -98,99 +114,108 @@ void setup() {
     Serial.println("OK (Listening for Dress)");
   }
 
-// ... (Keep the rest of setup above this) ...
-
   Serial.println("----------------------------------------");
-  Serial.print("[INFO] WiFi MAC Address: "); Serial.println(WiFi.macAddress());
-  Serial.print("[INFO] WiFi Channel: "); Serial.println(WiFi.channel()); // <--- NEW LINE
-  Serial.print("[INFO] WiFi Status: "); Serial.println(WiFi.status() == WL_CONNECTED ? "CONNECTED" : "DISCONNECTED");
-  Serial.println("----------------------------------------");
-  Serial.println("Waiting for Data Stream...");
+  Serial.println("✅ SYSTEM READY - Waiting for Data...");
 }
-
 
 // -------------------------------------------------------------------------
 // MAIN LOOP
 // -------------------------------------------------------------------------
 void loop() {
-  // 1. Update Basics
-  Core.updateClock();
+  Core.updateTasks();
   UI.update();
   Connectivity.update();
 
-  // 2. Check SOS Button
-  if (digitalRead(KEY1) == LOW) { 
-    handlePanic("BUTTON");
-    delay(500); 
-    return; 
+  checkManualSOS();
+  
+  // ---> LOW BATTERY OVERRIDE <---
+  if (Core.isLowBattery && UI.currentPage != PAGE_PANIC) {
+    UI.currentPage = PAGE_LOW_BATT;
+  } else if (!Core.isLowBattery && UI.currentPage == PAGE_LOW_BATT) {
+    UI.currentPage = PAGE_CLOCK; // Recover when plugged in
   }
 
-  // 3. Run AI (This includes the Sensor Read & Debug Print)
   runAILogic();
 }
 
 // -------------------------------------------------------------------------
-// AI LOGIC & DEBUG PRINTING
+// MANUAL BUTTON LOGIC (DOUBLE TAP TO SOS, SINGLE TAP TO WAKE)
+// -------------------------------------------------------------------------
+bool lastBtnState = HIGH; 
+unsigned long lastPressTime = 0;
+
+void checkManualSOS() {
+  int reading = digitalRead(KEY1);
+
+  if (reading == LOW && lastBtnState == HIGH) {
+      unsigned long now = millis();
+
+      // ---> WAKE UP THE SCREEN ON ANY PRESS <---
+      Core.resetScreenTimeout(); 
+
+      // Check for Double-Tap SOS
+      if (now - lastPressTime > 100 && now - lastPressTime < 800) {
+          handlePanic("MANUAL_SOS");
+          lastPressTime = 0; 
+      } else {
+          lastPressTime = now;
+      }
+  }
+  lastBtnState = reading;
+}
+
+// -------------------------------------------------------------------------
+// AI LOGIC (WITH HARDWARE BENCHMARKING & TOUCH POLLING)
 // -------------------------------------------------------------------------
 void runAILogic() {
-  // Collection Loop: Fills buffer with 1 second of data
-  // We print the FIRST reading of every batch so you can see the sensor values
-  bool debugPrinted = false;
-
   for (int i = 0; i < EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE; i += EI_CLASSIFIER_SENSOR_AXES_COUNT) {
       float x, y, z;
       unsigned long startMicros = micros(); 
 
-      // Read Sensor
+      // --- CHECK TASKS WHILE GATHERING DATA ---
+      checkManualSOS();
+      UI.handleTouch(); // <--- INSTANT TOUCH RESPONSE FIX 
+
       if (IMU.accelerationAvailable()) {
           IMU.readAcceleration(x, y, z);
-          
-          // DEBUG: Print Raw Sensors once per cycle
-          if (!debugPrinted) {
-            Serial.print("[SENSORS] X:"); Serial.print(x);
-            Serial.print(" Y:"); Serial.print(y);
-            Serial.print(" Z:"); Serial.print(z);
-            Serial.print(" | Dress Press:"); Serial.println(currentPressure);
-            debugPrinted = true;
-          }
-
-          // Fill Features
           features[i + 0] = x;
           features[i + 1] = y;
           features[i + 2] = z;
           features[i + 3] = currentPressure; 
       }
 
-      // Exact 50Hz Timing
       while (micros() - startMicros < 20000); 
   }
 
-  // Run Inference
   ei_impulse_result_t result = { 0 };
   signal_t features_signal;
   features_signal.total_length = EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE;
   features_signal.get_data = &raw_feature_get_data;
 
+  // --- START BENCHMARK TIMER ---
+  unsigned long startInference = millis();
+
   EI_IMPULSE_ERROR res = run_classifier(&features_signal, &result, false);
 
+  // --- STOP BENCHMARK TIMER ---
+  unsigned long endInference = millis();
+
   if (res == EI_IMPULSE_OK) {
-      // PRINT AI RESULTS
-      Serial.print("[AI RESULT] ");
+      // PRINT CALIBRATION DATA TO SERIAL MONITOR
+      Serial.println("\n--- 📊 HARDWARE CALIBRATION REPORT ---");
+      Serial.print("⏱️ Total Inference Time: "); Serial.print(endInference - startInference); Serial.println(" ms");
+      Serial.print("⚙️  DSP Processing Time:  "); Serial.print(result.timing.dsp); Serial.println(" ms");
+      Serial.print("🧠 Neural Net Time:      "); Serial.print(result.timing.classification); Serial.println(" ms");
+      Serial.print("💾 Free RAM (Heap):      "); Serial.print(ESP.getFreeHeap() / 1024); Serial.println(" KB");
+      Serial.println("----------------------------------------");
+
       float panic_score = 0.0;
-      
       for (size_t ix = 0; ix < EI_CLASSIFIER_LABEL_COUNT; ix++) {
-          Serial.print(result.classification[ix].label);
-          Serial.print(": ");
-          Serial.print(result.classification[ix].value);
-          Serial.print(" | ");
-          
           if (String(result.classification[ix].label) == "panic") {
             panic_score = result.classification[ix].value;
           }
       }
-      Serial.println(); // Newline
 
-      // TRIGGER ALERT
       if (panic_score > 0.85) {
           handlePanic("AI_FALL");
       }
