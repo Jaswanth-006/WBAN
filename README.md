@@ -1,6 +1,6 @@
 # 🛡️ WBAN: AI-Powered Smart Safety System
 
-**Wireless Body Area Network for Women's Safety & Health Monitoring**
+![Architecture Diagram](Nesso_N1/arch.png)
 
 ## 📖 Overview
 
